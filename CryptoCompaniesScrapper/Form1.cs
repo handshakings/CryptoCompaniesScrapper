@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -27,8 +28,12 @@ namespace CryptoCompaniesScrapper
             }));   
         }
 
-        private void button2_Click(object sender, EventArgs e)
+        private async void button2_Click(object sender, EventArgs e)
         {
+            //string src = await new HttpClient().GetStringAsync("https://www.coingecko.com/en/coins/gdrt");
+            //string src = await new HttpClient().GetStringAsync("https://www.coingecko.com/en/coins/vres");
+            
+
             string url = comboBox1.Text;
             MyDelegate myDelegate = new MyDelegate(UpdateLabel);
 
