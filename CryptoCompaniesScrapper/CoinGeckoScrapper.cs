@@ -1,6 +1,7 @@
 ﻿using OpenQA.Selenium;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Threading;
@@ -11,23 +12,26 @@ namespace CryptoCompaniesScrapper
     {
         SeleniumClass SeleniumClass = new SeleniumClass();
         Delegate progressDelegate;
+        Delegate countDelegate;
         IWebDriver chromeDriver;
         IWebDriver firefoxDriver;
         List<CompanyData> companiesData = null;
+        EmailFinder emailFinder = new EmailFinder();
+        int count = 0;
 
-        public CoinGeckoScrapper(Delegate myDelegate)
+        public CoinGeckoScrapper(Delegate myDelegate, Delegate myDelegate1)
         {
             progressDelegate = myDelegate;
+            countDelegate = myDelegate1;
+            progressDelegate.DynamicInvoke("Preparing Setup for Scrapping...");
+            companiesData = new List<CompanyData>();
+            chromeDriver = SeleniumClass.CreateChromeDriver(true, null);
+            firefoxDriver = SeleniumClass.CreateFirefoxDriver(true, null);
         }
 
         public List<CompanyData> GetCompanyData(string pageUrl)
         {
-            progressDelegate.DynamicInvoke("Preparing Setup for Scrapping...");
-            companiesData = new List<CompanyData>();
-            chromeDriver = SeleniumClass.CreateChromeDriver(true, null);
             progressDelegate.DynamicInvoke("Navigating to " + pageUrl);
-            firefoxDriver = SeleniumClass.CreateFirefoxDriver(true, null);
-
             GetCompany(pageUrl);
             if(companiesData == null)
             {
@@ -37,8 +41,10 @@ namespace CryptoCompaniesScrapper
             return companiesData;
         }
 
-        private async void GetCompany(string pageUrl)
+        private void GetCompany(string pageUrl)
         {
+            string[] userAgents = File.ReadAllText(Directory.GetCurrentDirectory() + "/user-agents.txt").Split('\n');
+            int userAgentsCounter = 0;
 
             SeleniumClass.Navigate(chromeDriver, pageUrl);
   
@@ -54,82 +60,96 @@ namespace CryptoCompaniesScrapper
                         string companyLink = element.FindElement(By.XPath("td[3]/div/div[2]/div/a[1]")).GetAttribute("href").Trim();
                         string companyName = element.FindElement(By.XPath("td[3]/div/div[2]/div/a[1]")).GetAttribute("text").Trim();
                         CompanyData companyData = new CompanyData { CompanyLink = companyLink, CompanyName = companyName };
-                        GetWebsiteAndEmail(companyLink);
-                        //GetWebsites(switcher, companyData);
+                        List<string> compWebsireAndEmail = GetWebsiteAndEmail(companyLink, userAgents[userAgentsCounter]);
+                        if(compWebsireAndEmail != null)
+                        {
+                            companyData.CompanyWebsite = compWebsireAndEmail.ElementAt(0);
+                            companyData.CompanyEmail = compWebsireAndEmail.ElementAt(1);
+                        }
+                        companiesData.Add(companyData);
                         switcher++;
+                        userAgentsCounter = userAgentsCounter < 999 ? userAgentsCounter++ : 0;
+                        countDelegate.DynamicInvoke(count++);
                     }
                     catch (Exception)
                     {
+                        countDelegate.DynamicInvoke(count++);
                         switcher++;
+                        userAgentsCounter = userAgentsCounter < 999 ? userAgentsCounter++ : 0;
                         continue;
                     }  
                 }
             }
         }
-        private async void GetWebsiteAndEmail(string url)
+        private List<string> GetWebsiteAndEmail(string url, string userAgent)
         {
             try
             {
-                string src = await new HttpClient().GetStringAsync(url);
+                progressDelegate.DynamicInvoke("Finding Company Website and Email at : " + url);
+                HttpClient client = new HttpClient();
+                client.DefaultRequestHeaders.Add("user-agnet", userAgent);
+                string src = client.GetStringAsync(url).Result;
                 src = src.Substring(src.IndexOf("Website"));
                 int i = src.IndexOf("</a>") - 100;
                 src = src.Substring(i, 100).Split('>')[0];
                 string companyWebsite = src.Substring(src.IndexOf("http")).Replace("\"", "").Trim();
+                string pageSource = client.GetStringAsync(companyWebsite).Result;
+                string email = string.Join("\n", emailFinder.SearchEmail(pageSource));
+                return new List<string> { companyWebsite,email };
             }
             catch (Exception)
             {
-
-                throw;
+                return null;
             }
         }
         private void GetWebsites(int switcher, CompanyData companyData)
         {
-            try
-            {
-                EmailFinder emailFinder = new EmailFinder();
-                string companyWebsite = null;
-                string companyEmail = null;
-                //chrome
-                if (switcher % 2 == 0)
-                {
-                    SeleniumClass.Navigate(chromeDriver, companyData.CompanyLink);
-                    try
-                    {
-                        companyWebsite = chromeDriver.FindElement(By.XPath("/html/body/div[5]/div[5]/div[2]/div[2]/div[3]/div/a")).GetAttribute("href");
-                    }
-                    catch (Exception)
-                    {
-                        companyWebsite = chromeDriver.FindElement(By.XPath("/html/body/div[5]/div[4]/div[2]/div[2]/div[3]/div/a")).GetAttribute("href");
-                    }
-                    List<string> emails = emailFinder.SearchEmail(chromeDriver.PageSource);
-                    companyEmail = string.Join("\n", emails);
-                }
-                //firefox
-                else
-                {
-                    SeleniumClass.Navigate(firefoxDriver, companyData.CompanyLink);
-                    try
-                    {
-                        string pageSource = firefoxDriver.PageSource.ToLower().Substring(firefoxDriver.PageSource
-                            .IndexOf("website"));
-                        companyWebsite = firefoxDriver.FindElement(By.XPath("/html/body/div[5]/div[5]/div[2]/div[2]/div[3]/div/a")).GetAttribute("href");
-                    }
-                    catch (Exception)
-                    {
-                        companyWebsite = firefoxDriver.FindElement(By.XPath("/html/body/div[5]/div[4]/div[2]/div[2]/div[3]/div/a")).GetAttribute("href");
-                    }
-                    List<string> emails = emailFinder.SearchEmail(firefoxDriver.PageSource);
-                    string a = firefoxDriver.PageSource;
-                    companyEmail = string.Join("\n", emails);
-                }
-                companyData.CompanyWebsite = companyWebsite;
-                companyData.CompanyEmail = companyEmail;
-                companiesData.Add(companyData);
-                progressDelegate.DynamicInvoke("Finding website and email of (" + companyData.CompanyName + ") ");
-            }
-            catch (Exception ex)
-            {
-            }
+            //try
+            //{
+            //    EmailFinder emailFinder = new EmailFinder();
+            //    string companyWebsite = null;
+            //    string companyEmail = null;
+            //    //chrome
+            //    if (switcher % 2 == 0)
+            //    {
+            //        SeleniumClass.Navigate(chromeDriver, companyData.CompanyLink);
+            //        try
+            //        {
+            //            companyWebsite = chromeDriver.FindElement(By.XPath("/html/body/div[5]/div[5]/div[2]/div[2]/div[3]/div/a")).GetAttribute("href");
+            //        }
+            //        catch (Exception)
+            //        {
+            //            companyWebsite = chromeDriver.FindElement(By.XPath("/html/body/div[5]/div[4]/div[2]/div[2]/div[3]/div/a")).GetAttribute("href");
+            //        }
+            //        List<string> emails = emailFinder.SearchEmail(chromeDriver.PageSource);
+            //        companyEmail = string.Join("\n", emails);
+            //    }
+            //    //firefox
+            //    else
+            //    {
+            //        SeleniumClass.Navigate(firefoxDriver, companyData.CompanyLink);
+            //        try
+            //        {
+            //            string pageSource = firefoxDriver.PageSource.ToLower().Substring(firefoxDriver.PageSource
+            //                .IndexOf("website"));
+            //            companyWebsite = firefoxDriver.FindElement(By.XPath("/html/body/div[5]/div[5]/div[2]/div[2]/div[3]/div/a")).GetAttribute("href");
+            //        }
+            //        catch (Exception)
+            //        {
+            //            companyWebsite = firefoxDriver.FindElement(By.XPath("/html/body/div[5]/div[4]/div[2]/div[2]/div[3]/div/a")).GetAttribute("href");
+            //        }
+            //        List<string> emails = emailFinder.SearchEmail(firefoxDriver.PageSource);
+            //        string a = firefoxDriver.PageSource;
+            //        companyEmail = string.Join("\n", emails);
+            //    }
+            //    companyData.CompanyWebsite = companyWebsite;
+            //    companyData.CompanyEmail = companyEmail;
+            //    companiesData.Add(companyData);
+            //    progressDelegate.DynamicInvoke("Finding website and email of (" + companyData.CompanyName + ") ");
+            //}
+            //catch (Exception ex)
+            //{
+            //}
         }
         private List<string> FindAllUrlsAndEmail(List<IWebElement> links)
         {
